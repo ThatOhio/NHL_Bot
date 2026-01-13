@@ -1,0 +1,9 @@
+services:
+  nhl-bot:
+    build: .
+    container_name: nhl-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - .env:/app/.env:ro
