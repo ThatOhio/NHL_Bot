@@ -2,8 +2,8 @@ import os
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
-from nhl_api import fetch_next_game, search_player, get_player_details, get_standings
-from image_generator import generate_player_card, generate_standings_image, generate_conference_image
+from nhl_api import fetch_next_game, search_player, get_player_details, get_standings, get_next_game_info, format_game_info
+from image_generator import generate_player_card, generate_standings_image, generate_conference_image, generate_next_games_image
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
@@ -22,16 +22,42 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 async def on_ready():
     print(f'{bot.user.name} has connected to Discord!')
 
-@bot.command(name='nextgames', help='Shows the next game for the Sabres, Kraken, and Stars.')
+@bot.command(name='nextgames', aliases=['next'], help='Shows the next game for the Sabres, Kraken, and Stars.')
 async def next_games(ctx):
-    response = "**Upcoming NHL Games:**\n"
-    
     async with ctx.typing():
+        games_data = []
         for team_name, team_abbr in TEAMS.items():
-            game_info = await fetch_next_game(team_abbr)
-            response += f"• **{team_name}**: {game_info}\n"
-    
-    await ctx.send(response)
+            game = await get_next_game_info(team_abbr)
+            if game:
+                home_abbr = game["homeTeam"]["abbrev"]
+                away_abbr = game["awayTeam"]["abbrev"]
+                is_home = (home_abbr == team_abbr)
+                opponent_abbr = away_abbr if is_home else home_abbr
+                
+                full_info = format_game_info(game)
+                # format_game_info returns "AWAY @ HOME Day @ Time"
+                # We want just "Day @ Time"
+                parts = full_info.split(" ")
+                time_only = " ".join(parts[3:])
+                
+                games_data.append({
+                    "team_name": team_name,
+                    "team_abbr": team_abbr,
+                    "opponent_abbr": opponent_abbr,
+                    "is_home": is_home,
+                    "time_str": time_only
+                })
+        
+        if not games_data:
+            await ctx.send("No upcoming games found for the tracked teams.")
+            return
+
+        try:
+            image_buffer = await generate_next_games_image(games_data)
+            file = discord.File(fp=image_buffer, filename="next_games.png")
+            await ctx.send(file=file)
+        except Exception as e:
+            await ctx.send(f"Error generating next games image: {str(e)}")
 
 @bot.command(name='player', help='Shows a player card for a given player name.')
 async def player_card(ctx, *, name: str):

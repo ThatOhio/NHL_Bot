@@ -7,6 +7,12 @@ EASTERN = ZoneInfo("America/New_York")
 ROSTER_CACHE = {"teams": None, "players": [], "last_updated": None}
 
 async def fetch_next_game(team_abbr: str):
+    game = await get_next_game_info(team_abbr)
+    if game:
+        return format_game_info(game)
+    return "No upcoming games found."
+
+async def get_next_game_info(team_abbr: str):
     # Using the week/now endpoint first as it's lighter
     url = f"https://api-web.nhle.com/v1/club-schedule/{team_abbr}/week/now"
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -22,18 +28,12 @@ async def fetch_next_game(team_abbr: str):
                 
                 now = datetime.now(timezone.utc)
                 
-                next_game = None
                 for game in games:
                     game_time = datetime.fromisoformat(game["startTimeUTC"].replace("Z", "+00:00"))
                     if game_time > now:
-                        next_game = game
-                        break
+                        return game
                 
-                if next_game:
-                    return format_game_info(next_game)
-                
-                # If no upcoming games this week, we could fetch the season schedule
-                # We try month/now if week/now failed to find an upcoming game
+                # If no upcoming games this week, try month
                 month_url = f"https://api-web.nhle.com/v1/club-schedule/{team_abbr}/month/now"
                 async with session.get(month_url, headers=headers) as m_response:
                     if m_response.status == 200:
@@ -42,11 +42,11 @@ async def fetch_next_game(team_abbr: str):
                         for game in m_games:
                             game_time = datetime.fromisoformat(game["startTimeUTC"].replace("Z", "+00:00"))
                             if game_time > now:
-                                return format_game_info(game)
+                                return game
                                 
-        return "No upcoming games found."
-    except Exception as e:
-        return f"Error fetching game: {str(e)}"
+        return None
+    except Exception:
+        return None
 
 def format_game_info(game):
     home_team = game["homeTeam"]["abbrev"]

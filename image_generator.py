@@ -306,3 +306,62 @@ async def generate_conference_image(data):
     img.save(buffer, format='PNG')
     buffer.seek(0)
     return buffer
+
+async def generate_next_games_image(games_data):
+    # games_data: list of {team_name, team_abbr, opponent_abbr, is_home, time_str}
+    width, height = 900, 400
+    img = Image.new('RGB', (width, height), color=(20, 20, 20))
+    draw = ImageDraw.Draw(img)
+    
+    # Border + Title
+    draw.rectangle([10, 10, width-10, height-10], outline=(50, 50, 50), width=5)
+    draw.text((width//2, 50), "UPCOMING GAMES", font=get_font(40), fill=(255, 255, 255), anchor="mm")
+    
+    # Fonts
+    team_name_font = get_font(28)
+    vs_font = get_font(24)
+    time_font = get_font(22)
+    
+    # EAch team column width
+    col_width = (width - 40) // 3
+    
+    for i, data in enumerate(games_data):
+        x_center = 20 + (i * col_width) + (col_width // 2)
+        y_offset = 130
+        
+        # Team Name
+        draw.text((x_center, y_offset), data['team_name'], font=team_name_font, fill=(255, 255, 255), anchor="mm")
+        y_offset += 80
+        
+        # Logos
+        our_logo = await get_team_logo(data['team_abbr'])
+        opp_logo = await get_team_logo(data['opponent_abbr'])
+        
+        logo_size = 100
+        
+        if our_logo:
+            our_logo_res = our_logo.resize((logo_size, logo_size), Image.LANCZOS)
+            img.paste(our_logo_res, (x_center - logo_size - 30, y_offset - logo_size // 2), our_logo_res)
+            
+        vs_text = "VS" if data['is_home'] else "@"
+        draw.text((x_center, y_offset), vs_text, font=vs_font, fill=(150, 150, 150), anchor="mm")
+        
+        if opp_logo:
+            opp_logo_res = opp_logo.resize((logo_size, logo_size), Image.LANCZOS)
+            img.paste(opp_logo_res, (x_center + 30, y_offset - logo_size // 2), opp_logo_res)
+            
+        y_offset += 90
+        
+        # Time, split if it's too long
+        time_str = data['time_str']
+        if " @ " in time_str:
+            day, time = time_str.split(" @ ", 1)
+            draw.text((x_center, y_offset), day, font=time_font, fill=(200, 200, 200), anchor="mm")
+            draw.text((x_center, y_offset + 30), time, font=time_font, fill=(200, 200, 200), anchor="mm")
+        else:
+            draw.text((x_center, y_offset), time_str, font=time_font, fill=(200, 200, 200), anchor="mm")
+
+    buffer = io.BytesIO()
+    img.save(buffer, format='PNG')
+    buffer.seek(0)
+    return buffer
