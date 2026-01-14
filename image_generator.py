@@ -308,8 +308,8 @@ async def generate_conference_image(data):
     return buffer
 
 async def generate_next_games_image(games_data):
-    # games_data: list of {team_name, team_abbr, opponent_abbr, is_home, time_str}
-    width, height = 900, 400
+    # games_data: list of {team_name, team_abbr, opponent_abbr, is_home, time_str, broadcasts}
+    width, height = 900, 480
     img = Image.new('RGB', (width, height), color=(20, 20, 20))
     draw = ImageDraw.Draw(img)
     
@@ -321,6 +321,8 @@ async def generate_next_games_image(games_data):
     team_name_font = get_font(28)
     vs_font = get_font(24)
     time_font = get_font(22)
+    broadcast_label_font = get_font(16)
+    broadcast_font = get_font(18)
     
     # EAch team column width
     col_width = (width - 40) // 3
@@ -358,8 +360,15 @@ async def generate_next_games_image(games_data):
             day, time = time_str.split(" @ ", 1)
             draw.text((x_center, y_offset), day, font=time_font, fill=(200, 200, 200), anchor="mm")
             draw.text((x_center, y_offset + 30), time, font=time_font, fill=(200, 200, 200), anchor="mm")
+            y_offset += 65
         else:
             draw.text((x_center, y_offset), time_str, font=time_font, fill=(200, 200, 200), anchor="mm")
+            y_offset += 45
+
+        # Broadcasts
+        if data.get('broadcasts'):
+            draw.text((x_center, y_offset), "WATCH ON", font=broadcast_label_font, fill=(100, 100, 100), anchor="mm")
+            draw.text((x_center, y_offset + 25), data['broadcasts'], font=broadcast_font, fill=(0, 180, 255), anchor="mm")
 
     buffer = io.BytesIO()
     img.save(buffer, format='PNG')

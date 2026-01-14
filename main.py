@@ -40,12 +40,24 @@ async def next_games(ctx):
                 parts = full_info.split(" ")
                 time_only = " ".join(parts[3:])
                 
+                broadcasts = game.get("tvBroadcasts", [])
+                relevant_networks = []
+                for b in broadcasts:
+                    # Include National broadcasts or those matching our team's home/away status
+                    if b.get("market") == "N" or (is_home and b.get("market") == "H") or (not is_home and b.get("market") == "A"):
+                        network = b.get("network")
+                        if network and network not in relevant_networks:
+                            relevant_networks.append(network)
+                
+                broadcast_str = ", ".join(relevant_networks) if relevant_networks else None
+
                 games_data.append({
                     "team_name": team_name,
                     "team_abbr": team_abbr,
                     "opponent_abbr": opponent_abbr,
                     "is_home": is_home,
-                    "time_str": time_only
+                    "time_str": time_only,
+                    "broadcasts": broadcast_str
                 })
         
         if not games_data:
