@@ -76,6 +76,55 @@ def format_game_info(game):
     
     return f"{away_team} @ {home_team} {formatted_time}"
 
+def is_on_espn_plus(game, scoreboard_data=None):
+    # First, try to use ESPN API data if provided
+    if scoreboard_data:
+        home_abbr = game["homeTeam"]["abbrev"]
+        away_abbr = game["awayTeam"]["abbrev"]
+        
+        events = scoreboard_data.get("events", [])
+        for event in events:
+            competitions = event.get("competitions", [])
+            for comp in competitions:
+                competitors = comp.get("competitors", [])
+                teams = [c.get("team", {}).get("abbreviation") for c in competitors]
+                if home_abbr in teams and away_abbr in teams:
+                    broadcasts = comp.get("broadcasts", [])
+                    for b in broadcasts:
+                        if "ESPN+" in b.get("names", []):
+                            return True
+                    # If we found the game but ESPN+ is not listed
+                    return False
+
+    # Fallback to heuristic logic
+    broadcasts = game.get("tvBroadcasts", [])
+    if not broadcasts:
+        return False
+
+    # Exclusives that are NOT on ESPN+
+    excluded_networks = ["TNT", "NHLN", "truTV", "HBO MAX"]
+    for b in broadcasts:
+        if b.get("network") in excluded_networks:
+            return False
+
+    return True
+
+async def get_espn_scoreboard(date_str: str):
+    """
+    Fetches the ESPN scoreboard for a given date or date range.
+    date_str should be in YYYYMMDD or YYYYMMDD-YYYYMMDD format.
+    """
+    url = f"https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard?dates={date_str}"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers) as response:
+                if response.status == 200:
+                    return await response.json()
+    except Exception:
+        pass
+    return None
+
 async def search_player(name: str):
     """
     Searches for a player by name. Since direct search is unreliable,

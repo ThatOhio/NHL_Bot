@@ -2,7 +2,7 @@ import os
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
-from nhl_api import fetch_next_game, search_player, get_player_details, get_standings, get_next_game_info, format_game_info
+from nhl_api import fetch_next_game, search_player, get_player_details, get_standings, get_next_game_info, format_game_info, is_on_espn_plus, get_espn_scoreboard
 from image_generator import generate_player_card, generate_standings_image, generate_conference_image, generate_next_games_image
 
 load_dotenv()
@@ -25,40 +25,62 @@ async def on_ready():
 @bot.command(name='nextgames', aliases=['next'], help='Shows the next game for the Sabres, Kraken, and Stars.')
 async def next_games(ctx):
     async with ctx.typing():
-        games_data = []
+        # First, fetch game info for all teams to identify dates
+        team_games = {}
+        all_dates = []
         for team_name, team_abbr in TEAMS.items():
             game = await get_next_game_info(team_abbr)
             if game:
-                home_abbr = game["homeTeam"]["abbrev"]
-                away_abbr = game["awayTeam"]["abbrev"]
-                is_home = (home_abbr == team_abbr)
-                opponent_abbr = away_abbr if is_home else home_abbr
-                
-                full_info = format_game_info(game)
-                # format_game_info returns "AWAY @ HOME Day @ Time"
-                # We want just "Day @ Time"
-                parts = full_info.split(" ")
-                time_only = " ".join(parts[3:])
-                
-                broadcasts = game.get("tvBroadcasts", [])
-                relevant_networks = []
-                for b in broadcasts:
-                    # Include National broadcasts or those matching our team's home/away status
-                    if b.get("market") == "N" or (is_home and b.get("market") == "H") or (not is_home and b.get("market") == "A"):
-                        network = b.get("network")
-                        if network and network not in relevant_networks:
-                            relevant_networks.append(network)
-                
-                broadcast_str = ", ".join(relevant_networks) if relevant_networks else None
+                team_games[team_abbr] = (team_name, game)
+                all_dates.append(game["gameDate"].replace("-", ""))
+        
+        if not team_games:
+            await ctx.send("No upcoming games found for the tracked teams.")
+            return
 
-                games_data.append({
-                    "team_name": team_name,
-                    "team_abbr": team_abbr,
-                    "opponent_abbr": opponent_abbr,
-                    "is_home": is_home,
-                    "time_str": time_only,
-                    "broadcasts": broadcast_str
-                })
+        # Fetch ESPN scoreboard for the relevant date range
+        scoreboard_data = None
+        if all_dates:
+            min_date = min(all_dates)
+            max_date = max(all_dates)
+            date_range = min_date if min_date == max_date else f"{min_date}-{max_date}"
+            scoreboard_data = await get_espn_scoreboard(date_range)
+
+        games_data = []
+        for team_abbr, (team_name, game) in team_games.items():
+            home_abbr = game["homeTeam"]["abbrev"]
+            away_abbr = game["awayTeam"]["abbrev"]
+            is_home = (home_abbr == team_abbr)
+            opponent_abbr = away_abbr if is_home else home_abbr
+            
+            full_info = format_game_info(game)
+            # format_game_info returns "AWAY @ HOME Day @ Time"
+            # We want just "Day @ Time"
+            parts = full_info.split(" ")
+            time_only = " ".join(parts[3:])
+            
+            broadcasts = game.get("tvBroadcasts", [])
+            relevant_networks = []
+            for b in broadcasts:
+                # Include National broadcasts or those matching our team's home/away status
+                if b.get("market") == "N" or (is_home and b.get("market") == "H") or (not is_home and b.get("market") == "A"):
+                    network = b.get("network")
+                    if network and network not in relevant_networks:
+                        relevant_networks.append(network)
+            
+            if is_on_espn_plus(game, scoreboard_data) and "ESPN+" not in relevant_networks:
+                relevant_networks.append("ESPN+")
+            
+            broadcast_str = ", ".join(relevant_networks) if relevant_networks else None
+
+            games_data.append({
+                "team_name": team_name,
+                "team_abbr": team_abbr,
+                "opponent_abbr": opponent_abbr,
+                "is_home": is_home,
+                "time_str": time_only,
+                "broadcasts": broadcast_str
+            })
         
         if not games_data:
             await ctx.send("No upcoming games found for the tracked teams.")
