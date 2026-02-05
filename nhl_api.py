@@ -63,16 +63,18 @@ def format_game_info(game):
     
     if delta.days == 0:
         # Today @ TIME
-        time_str = dt_et.strftime("%-I:%M:%S %p")
+        time_str = dt_et.strftime("%-I:%M %p")
         formatted_time = f"Today @ {time_str}"
     elif 0 < delta.days < 7:
         # WEEKDAY @ TIME
-        weekday = dt_et.strftime("%A")
-        time_str = dt_et.strftime("%-I:%M:%S %p")
+        weekday = dt_et.strftime("%a")
+        time_str = dt_et.strftime("%-I:%M %p")
         formatted_time = f"{weekday} @ {time_str}"
     else:
-        # EEEE, MMMM d, yyyy h:mm:ss a z
-        formatted_time = dt_et.strftime("%A, %B %-d, %Y %-I:%M:%S %p %Z")
+        # SHORT_DATE @ TIME
+        date_str = dt_et.strftime("%a, %b %-d")
+        time_str = dt_et.strftime("%-I:%M %p")
+        formatted_time = f"{date_str} @ {time_str}"
     
     return f"{away_team} @ {home_team} {formatted_time}"
 
@@ -96,12 +98,11 @@ def is_on_espn_plus(game, scoreboard_data=None):
                     # If we found the game but ESPN+ is not listed
                     return False
 
-    # Fallback to heuristic logic
     broadcasts = game.get("tvBroadcasts", [])
     if not broadcasts:
         return False
 
-    # Exclusives that are NOT on ESPN+
+    # These networks are NOT on ESPN+
     excluded_networks = ["TNT", "NHLN", "truTV", "HBO MAX"]
     for b in broadcasts:
         if b.get("network") in excluded_networks:
