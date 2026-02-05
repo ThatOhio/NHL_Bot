@@ -1,6 +1,10 @@
 import io
 import aiohttp
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from PIL import Image, ImageDraw, ImageFont
+
+EASTERN = ZoneInfo("America/New_York")
 
 # Common linux font paths, updated for standard Docker/Debian paths
 FONT_PATHS = [
@@ -374,3 +378,116 @@ async def generate_next_games_image(games_data):
     img.save(buffer, format='PNG')
     buffer.seek(0)
     return buffer
+
+async def generate_olympic_schedule_image(games_data, target_date):
+    # games_data: list of {league, date, time_utc, home, away, round}
+    # home/away: {name, abbreviation, alpha2}
+    
+    width = 900
+    row_height = 80
+    header_height = 120
+    footer_height = 40
+    num_rows = len(games_data) if games_data else 1
+    height = header_height + (num_rows * row_height) + footer_height
+    
+    img = Image.new('RGB', (width, height), color=(20, 20, 20))
+    draw = ImageDraw.Draw(img)
+
+    # Border
+    draw.rectangle([10, 10, width-10, height-10], outline=(50, 50, 50), width=5)
+    
+    # Title
+    date_str = target_date.strftime("%A, %b %d, %Y").upper()
+    draw.text((width//2, 45), "OLYMPIC HOCKEY SCHEDULE", font=get_font(30), fill=(255, 255, 255), anchor="mm")
+    draw.text((width//2, 85), date_str, font=get_font(20), fill=(150, 150, 150), anchor="mm")
+    
+    if not games_data:
+        draw.text((width//2, header_height + row_height // 2), "No games scheduled for the next two days", 
+                  font=get_font(24), fill=(150, 150, 150), anchor="mm")
+    else:
+        curr_y = header_height
+        for game in games_data:
+            if game.get("no_games"):
+                date_str = game['date'].strftime("%A, %b %d")
+                draw.text((width//2, curr_y + row_height // 2), f"No games scheduled for {date_str}", 
+                          font=get_font(20), fill=(150, 150, 150), anchor="mm")
+                curr_y += row_height
+                if game != games_data[-1]:
+                    draw.line([30, curr_y, width-30, curr_y], fill=(40, 40, 40), width=1)
+                continue
+
+            y_mid = curr_y + row_height // 2
+
+            # League (Men's / Women's)
+            league_text = "MEN'S" if game['league'] == 'men' else "WOMEN'S"
+            draw.text((30, y_mid), league_text, font=get_font(18), fill=(0, 150, 255), anchor="lm")
+            
+            # Date
+            game_date_str = game['date'].strftime("%m/%d")
+            draw.text((120, y_mid), game_date_str, font=get_font(16), fill=(200, 200, 200), anchor="lm")
+
+            # Time — right aligned
+            dt_utc = datetime.fromisoformat(game['time_utc'].replace("Z", "+00:00"))
+            dt_et = dt_utc.astimezone(EASTERN)
+            time_str = dt_et.strftime("%I:%M %p ET")
+            draw.text((width - 30, y_mid), time_str, font=get_font(18), fill=(255, 255, 255), anchor="rm")
+
+            # Teams and Flags
+            away = game['away']
+            home = game['home']
+            await draw_olympic_team(draw, img, away, 430, y_mid, "rm")
+            draw.text((450, y_mid), "VS", font=get_font(20), fill=(100, 100, 100), anchor="mm")
+            await draw_olympic_team(draw, img, home, 470, y_mid, "lm")
+            
+            curr_y += row_height
+            if game != games_data[-1]:
+                draw.line([30, curr_y, width-30, curr_y], fill=(40, 40, 40), width=1)
+
+    buffer = io.BytesIO()
+    img.save(buffer, format='PNG')
+    buffer.seek(0)
+    return buffer
+
+async def draw_olympic_team(draw, img, team, x, y, anchor):
+    name = team.get('name', 'TBD')
+    abbr = team.get('abbreviation', 'TBD')
+    alpha2 = team.get('alpha2')
+    
+    # Try to get flag
+    flag_img = None
+    if alpha2:
+        flag_url = f"https://flagcdn.com/w160/{alpha2.lower()}.png"
+        flag_data = await fetch_image(flag_url)
+        if flag_data:
+            try:
+                flag_img = Image.open(io.BytesIO(flag_data)).convert("RGBA")
+            except:
+                pass
+    
+    font = get_font(20)
+    spacing = 10
+    flag_w, flag_h = 40, 24
+
+    # Simple truncation if too long to avoid center crowding
+    max_text_width = 240
+    bbox = draw.textbbox((0, 0), name, font=font)
+    if (bbox[2] - bbox[0]) > max_text_width:
+        while (bbox[2] - bbox[0]) > max_text_width - 15:
+            name = name[:-1]
+            bbox = draw.textbbox((0, 0), name + "…", font=font)
+        name += "…"
+
+    if anchor == "rm":
+        # Text block (right-aligned) then Flag to the far right
+        text_right = x - (flag_w + spacing if flag_img else 0)
+        draw.text((text_right, y), name, font=font, fill=(255, 255, 255), anchor="rm")
+        if flag_img:
+            flag_resized = flag_img.resize((flag_w, flag_h), Image.LANCZOS)
+            img.paste(flag_resized, (x - flag_w, y - flag_h // 2), flag_resized)
+    else:
+        # Flag then Text block (left-aligned)
+        text_left = x + (flag_w + spacing if flag_img else 0)
+        if flag_img:
+            flag_resized = flag_img.resize((flag_w, flag_h), Image.LANCZOS)
+            img.paste(flag_resized, (x, y - flag_h // 2), flag_resized)
+        draw.text((text_left, y), name, font=font, fill=(255, 255, 255), anchor="lm")

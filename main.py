@@ -1,9 +1,11 @@
 import os
 import discord
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from discord.ext import commands
 from dotenv import load_dotenv
-from nhl_api import fetch_next_game, search_player, get_player_details, get_standings, get_next_game_info, format_game_info, is_on_espn_plus, get_espn_scoreboard
-from image_generator import generate_player_card, generate_standings_image, generate_conference_image, generate_next_games_image
+from nhl_api import fetch_next_game, search_player, get_player_details, get_standings, get_next_game_info, format_game_info, is_on_espn_plus, get_espn_scoreboard, get_olympic_schedule
+from image_generator import generate_player_card, generate_standings_image, generate_conference_image, generate_next_games_image, generate_olympic_schedule_image
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
@@ -163,6 +165,29 @@ async def conference_command(ctx):
             await ctx.send(file=file)
         except Exception as e:
             await ctx.send(f"Error generating conference image: {str(e)}")
+
+@bot.command(name='o-next', help='Shows the next Olympic hockey games.')
+async def olympic_next(ctx):
+    async with ctx.typing():
+        # Determine "today" and "tomorrow" based on America/New_York timezone
+        now_et = datetime.now(ZoneInfo("America/New_York"))
+        today_et = now_et.date()
+        tomorrow_et = today_et + timedelta(days=1)
+        
+        all_games = []
+        for date in [today_et, tomorrow_et]:
+            games = await get_olympic_schedule(date)
+            if not games:
+                all_games.append({"no_games": True, "date": date})
+            else:
+                all_games.extend(games)
+        
+        try:
+            image_buffer = await generate_olympic_schedule_image(all_games, today_et)
+            file = discord.File(fp=image_buffer, filename="olympic_schedule.png")
+            await ctx.send(file=file)
+        except Exception as e:
+            await ctx.send(f"Error generating Olympic schedule image: {str(e)}")
 
 if __name__ == "__main__":
     if TOKEN:
