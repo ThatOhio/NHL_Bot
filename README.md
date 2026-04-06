@@ -37,6 +37,6 @@ You can also deploy this bot using Docker:
 ## Commands
 
 - `!nextgames`: Shows the next scheduled game for the Buffalo Sabres, Seattle Kraken, and Dallas Stars.
-- `!player <name>`: Shows a "player card" image for the specified player, including their headshot, team logo, and current season stats.
+- `!player <name>`: Shows a "player card" image for the specified player, including headshot, team logo, position, physical profile (height/weight), and current season stats.
 - `!standings`: Shows a playoff overview image with division leaders and wildcard teams for both conferences.
 - `!conference`: Shows a full standings image with both Eastern and Western conferences side by side.

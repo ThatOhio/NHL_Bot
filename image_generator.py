@@ -56,7 +56,7 @@ async def get_team_logo(team_abbr):
     return None
 
 async def generate_player_card(data):
-    width, height = 500, 700
+    width, height = 500, 680
     card = Image.new('RGB', (width, height), color=(20, 20, 20))
     draw = ImageDraw.Draw(card)
     
@@ -71,10 +71,10 @@ async def generate_player_card(data):
     
     if headshot_data:
         headshot = Image.open(io.BytesIO(headshot_data)).convert("RGBA")
-        # Resize headshot, typical size is ~260x260
-        headshot = headshot.resize((350, 350))
+        # Resize headshot, then leave room beneath for profile details.
+        headshot = headshot.resize((320, 320))
         # Center headshot
-        card.paste(headshot, (75, 120), headshot)
+        card.paste(headshot, (90, 120), headshot)
         
     # Add Logo (top right)
     if logo:
@@ -90,10 +90,28 @@ async def generate_player_card(data):
     number = data.get("sweaterNumber", "")
     pos = data.get("position", "")
     team_name = data.get("fullTeamName", {}).get("default", "")
+    shoots_catches = data.get("shootsCatches")
+    height_inches = data.get("heightInInches")
+    weight_pounds = data.get("weightInPounds")
     
     draw.text((30, 30), first_name, font=get_font(25), fill=(200, 200, 200))
     draw.text((30, 60), last_name, font=name_font, fill=(255, 255, 255))
     draw.text((30, 110), f"#{number} | {pos} | {team_name}", font=info_font, fill=(150, 150, 150))
+
+    # Physical profile
+    details_font = get_font(22)
+    profile_parts = []
+    if isinstance(height_inches, int):
+        feet = height_inches // 12
+        inches = height_inches % 12
+        profile_parts.append(f"HT: {feet}'{inches}\"")
+    if isinstance(weight_pounds, int):
+        profile_parts.append(f"WT: {weight_pounds} lb")
+    if shoots_catches:
+        handed_label = "Catches" if pos == "G" else "Shoots"
+        profile_parts.append(f"{handed_label}: {shoots_catches}")
+    if profile_parts:
+        draw.text((30, 450), " | ".join(profile_parts), font=details_font, fill=(180, 180, 180))
 
     # Stats Section
     stats_y = 500
