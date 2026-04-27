@@ -25,6 +25,38 @@ def get_font(size):
             continue
     return ImageFont.load_default()
 
+def wrap_text(text, font, max_width):
+    if not text:
+        return []
+    
+    lines = []
+    parts = text.split(",")
+    current_line = ""
+    
+    dummy_img = Image.new('RGB', (1, 1))
+    dummy_draw = ImageDraw.Draw(dummy_img)
+
+    for i, part in enumerate(parts):
+        part = part.strip()
+        # Add comma back except for the last one
+        display_part = part + "," if i < len(parts) - 1 else part
+            
+        test_line = (current_line + " " + display_part).strip() if current_line else display_part
+        
+        bbox = dummy_draw.textbbox((0, 0), test_line, font=font)
+        w = bbox[2] - bbox[0]
+        
+        if w <= max_width:
+            current_line = test_line
+        else:
+            if current_line:
+                lines.append(current_line)
+            current_line = display_part
+            
+    if current_line:
+        lines.append(current_line)
+    return lines
+
 async def fetch_image(url):
     headers = {"User-Agent": "Mozilla/5.0"}
     async with aiohttp.ClientSession() as session:
@@ -34,16 +66,27 @@ async def fetch_image(url):
     return None
 
 async def get_team_logo(team_abbr):
+    if not team_abbr:
+        return None
     team_abbr = team_abbr.lower()
     
     # Some NHL abbreviations have different ESPN abbreviations
     espn_map = {
         "tbl": "tb",
         "sjs": "sj",
-        "lak": "la"
+        "lak": "la",
+        "njd": "nj"
     }
     espn_abbr = espn_map.get(team_abbr, team_abbr)
     
+    if team_abbr == "tbd":
+        # Return a simple grey circle or placeholder for TBD
+        img = Image.new('RGBA', (100, 100), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        draw.ellipse([10, 10, 90, 90], fill=(60, 60, 60))
+        draw.text((50, 50), "?", font=get_font(40), fill=(255, 255, 255), anchor="mm")
+        return img
+
     if team_abbr in LOGO_CACHE:
         return LOGO_CACHE[team_abbr]
     
@@ -331,7 +374,7 @@ async def generate_conference_image(data):
 
 async def generate_next_games_image(games_data):
     # games_data: list of {team_name, team_abbr, opponent_abbr, is_home, time_str, broadcasts}
-    width, height = 900, 480
+    width, height = 900, 520
     img = Image.new('RGB', (width, height), color=(20, 20, 20))
     draw = ImageDraw.Draw(img)
     
@@ -343,6 +386,7 @@ async def generate_next_games_image(games_data):
     team_name_font = get_font(28)
     vs_font = get_font(24)
     time_font = get_font(22)
+    playoff_font = get_font(18)
     broadcast_label_font = get_font(16)
     broadcast_font = get_font(18)
     
@@ -387,10 +431,31 @@ async def generate_next_games_image(games_data):
             draw.text((x_center, y_offset), time_str, font=time_font, fill=(200, 200, 200), anchor="mm")
             y_offset += 45
 
+        # Playoff Info
+        if data.get('playoff_info'):
+            p_info = data['playoff_info']
+            if "\n" in p_info:
+                p_parts = p_info.split("\n")
+                for p_part in p_parts:
+                    draw.text((x_center, y_offset), p_part, font=playoff_font, fill=(255, 215, 0), anchor="mm")
+                    y_offset += 25
+            else:
+                draw.text((x_center, y_offset), p_info, font=playoff_font, fill=(255, 215, 0), anchor="mm")
+                y_offset += 25
+            y_offset += 10
+
         # Broadcasts
         if data.get('broadcasts'):
             draw.text((x_center, y_offset), "WATCH ON", font=broadcast_label_font, fill=(100, 100, 100), anchor="mm")
-            draw.text((x_center, y_offset + 25), data['broadcasts'], font=broadcast_font, fill=(0, 180, 255), anchor="mm")
+            y_offset += 25
+            
+            # Wrap broadcast text
+            max_broadcast_width = col_width - 20
+            broadcast_lines = wrap_text(data['broadcasts'], broadcast_font, max_broadcast_width)
+            
+            for line in broadcast_lines:
+                draw.text((x_center, y_offset), line, font=broadcast_font, fill=(0, 180, 255), anchor="mm")
+                y_offset += 22
 
     buffer = io.BytesIO()
     img.save(buffer, format='PNG')

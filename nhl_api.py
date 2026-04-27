@@ -14,42 +14,99 @@ async def fetch_next_game(team_abbr: str):
     return "No upcoming games found."
 
 async def get_next_game_info(team_abbr: str):
-    # Using the week/now endpoint first as it's lighter
-    url = f"https://api-web.nhle.com/v1/club-schedule/{team_abbr}/week/now"
     headers = {"User-Agent": "Mozilla/5.0"}
+    now = datetime.now(timezone.utc)
     
     try:
         async with aiohttp.ClientSession() as session:
+            # 1. Try week/now
+            url = f"https://api-web.nhle.com/v1/club-schedule/{team_abbr}/week/now"
             async with session.get(url, headers=headers) as response:
-                if response.status != 200:
-                    return None
+                if response.status == 200:
+                    data = await response.json()
+                    for game in data.get("games", []):
+                        game_time = datetime.fromisoformat(game["startTimeUTC"].replace("Z", "+00:00"))
+                        if game_time > now:
+                            return game
                 
-                data = await response.json()
-                games = data.get("games", [])
-                
-                now = datetime.now(timezone.utc)
-                
-                for game in games:
-                    game_time = datetime.fromisoformat(game["startTimeUTC"].replace("Z", "+00:00"))
-                    if game_time > now:
-                        return game
-                
-                # If no upcoming games this week, try month
-                month_url = f"https://api-web.nhle.com/v1/club-schedule/{team_abbr}/month/now"
-                async with session.get(month_url, headers=headers) as m_response:
-                    if m_response.status == 200:
-                        m_data = await m_response.json()
-                        m_games = m_data.get("games", [])
-                        for game in m_games:
-                            game_time = datetime.fromisoformat(game["startTimeUTC"].replace("Z", "+00:00"))
-                            if game_time > now:
-                                return game
+            # 2. Try month/now
+            month_url = f"https://api-web.nhle.com/v1/club-schedule/{team_abbr}/month/now"
+            async with session.get(month_url, headers=headers) as m_response:
+                if m_response.status == 200:
+                    m_data = await m_response.json()
+                    for game in m_data.get("games", []):
+                        game_time = datetime.fromisoformat(game["startTimeUTC"].replace("Z", "+00:00"))
+                        if game_time > now:
+                            return game
+            
+            # 3. Look ahead to NEXT month if current month is almost over or has no more games
+            # This is useful at the end of a month
+            next_month = (now.replace(day=28) + timedelta(days=4)).strftime("%Y-%m")
+            next_month_url = f"https://api-web.nhle.com/v1/club-schedule/{team_abbr}/month/{next_month}"
+            async with session.get(next_month_url, headers=headers) as nm_response:
+                if nm_response.status == 200:
+                    nm_data = await nm_response.json()
+                    for game in nm_data.get("games", []):
+                        game_time = datetime.fromisoformat(game["startTimeUTC"].replace("Z", "+00:00"))
+                        if game_time > now:
+                            return game
+
+            # 4. Fallback: Check Playoff Bracket if it's playoff season (April - June)
+            if 4 <= now.month <= 6:
+                year = now.year if now.month >= 4 else now.year - 1
+                bracket_url = f"https://api-web.nhle.com/v1/playoff-bracket/{year}"
+                async with session.get(bracket_url, headers=headers) as b_response:
+                    if b_response.status == 200:
+                        b_data = await b_response.json()
+                        # Find series involving the team
+                        for series in b_data.get("series", []):
+                            bottom_abbr = series.get("bottomSeed", {}).get("abbrev")
+                            top_abbr = series.get("topSeed", {}).get("abbrev")
+                            
+                            if team_abbr in [bottom_abbr, top_abbr]:
+                                # Team is in a series. Check if there are scheduled games we missed
+                                # Actually, if we are here, club-schedule failed.
+                                # Return a "virtual" game object indicating TBD status
+                                return {
+                                    "gameType": 3,
+                                    "isTBD": True,
+                                    "team_abbr": team_abbr,
+                                    "seriesStatus": series.get("seriesStatus"),
+                                    "topSeed": series.get("topSeed"),
+                                    "bottomSeed": series.get("bottomSeed")
+                                }
                                 
         return None
     except Exception:
         return None
 
 def format_game_info(game):
+    if game.get("isTBD"):
+        status = game.get("seriesStatus", {})
+        series_title = status.get("seriesTitle", "Playoffs")
+        top_wins = status.get("topSeedWins", 0)
+        bot_wins = status.get("bottomSeedWins", 0)
+        
+        # Find opponent
+        top_abbr = game.get("topSeed", {}).get("abbrev")
+        bot_abbr = game.get("bottomSeed", {}).get("abbrev")
+        is_top = game["team_abbr"] == top_abbr
+        opponent = bot_abbr if is_top else top_abbr
+        
+        if not opponent:
+            opponent = "TBD"
+            
+        score_str = f"{top_wins}-{bot_wins}" if is_top else f"{bot_wins}-{top_wins}"
+        
+        if top_wins == bot_wins:
+            summary = f"Series Tied {top_wins}-{bot_wins}"
+        elif (is_top and top_wins > bot_wins) or (not is_top and bot_wins > top_wins):
+            summary = f"Leading Series {score_str}"
+        else:
+            summary = f"Trailing Series {score_str}"
+            
+        return f"{game['team_abbr']} vs {opponent} ({series_title}) - {summary} (Next Game TBD)"
+
     home_team = game["homeTeam"]["abbrev"]
     away_team = game["awayTeam"]["abbrev"]
     start_time_utc = game["startTimeUTC"]
@@ -77,13 +134,54 @@ def format_game_info(game):
         time_str = dt_et.strftime("%-I:%M %p")
         formatted_time = f"{date_str} @ {time_str}"
     
-    return f"{away_team} @ {home_team} {formatted_time}"
+    res = f"{away_team} @ {home_team} {formatted_time}"
+    
+    # Add playoff info if available
+    if game.get("gameType") == 3 and "seriesStatus" in game:
+        status = game["seriesStatus"]
+        g_num = status.get("gameNumberOfSeries")
+        top_wins = status.get("topSeedWins", 0)
+        bot_wins = status.get("bottomSeedWins", 0)
+        
+        home_is_top = (home_team == game.get("seriesStatus", {}).get("topSeed", {}).get("abbrev")) # Wait, seriesStatus might not have topSeed/bottomSeed info directly in the same way
+        # Let's check the structure again from the probe
+        
+        # Actually seriesStatus in club-schedule contains:
+        # "seriesStatus": {
+        #   "round": 1,
+        #   "seriesTitle": "1st Round",
+        #   "topSeedWins": 2,
+        #   "bottomSeedWins": 2,
+        #   "gameNumberOfSeries": 5
+        # }
+        
+        if top_wins == bot_wins:
+            series_summary = f"Series Tied {top_wins}-{bot_wins}"
+        else:
+            # We don't know who is top seed from this object alone in club-schedule usually, 
+            # but we can just show the score
+            series_summary = f"Series: {top_wins}-{bot_wins}"
+            
+        res += f" [Game {g_num} - {series_summary}]"
+        
+    return res
+
+NHL_TO_ESPN_ABBR = {
+    "LAK": "LA",
+    "TBL": "TB",
+    "NJD": "NJ",
+    "SJS": "SJ"
+}
 
 def is_on_espn_plus(game, scoreboard_data=None):
     # First, try to use ESPN API data if provided
     if scoreboard_data:
-        home_abbr = game["homeTeam"]["abbrev"]
-        away_abbr = game["awayTeam"]["abbrev"]
+        nhl_home = game["homeTeam"]["abbrev"]
+        nhl_away = game["awayTeam"]["abbrev"]
+        
+        # Map NHL abbreviations to ESPN abbreviations
+        home_abbr = NHL_TO_ESPN_ABBR.get(nhl_home, nhl_home)
+        away_abbr = NHL_TO_ESPN_ABBR.get(nhl_away, nhl_away)
         
         events = scoreboard_data.get("events", [])
         for event in events:

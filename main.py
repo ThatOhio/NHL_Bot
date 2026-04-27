@@ -50,17 +50,57 @@ async def next_games(ctx):
 
         games_data = []
         for team_abbr, (team_name, game) in team_games.items():
+            if game.get("isTBD"):
+                # Handle TBD games (usually between playoff rounds)
+                status = game.get("seriesStatus", {})
+                series_title = status.get("seriesTitle", "Playoffs")
+                top_wins = status.get("topSeedWins", 0)
+                bot_wins = status.get("bottomSeedWins", 0)
+                
+                top_abbr = game.get("topSeed", {}).get("abbrev")
+                bot_abbr = game.get("bottomSeed", {}).get("abbrev")
+                is_top = (team_abbr == top_abbr)
+                opponent_abbr = bot_abbr if is_top else top_abbr
+                if not opponent_abbr:
+                    opponent_abbr = "TBD"
+                
+                score_str = f"{top_wins}-{bot_wins}" if is_top else f"{bot_wins}-{top_wins}"
+                if top_wins == bot_wins:
+                    series_summary = f"Series Tied {top_wins}-{bot_wins}"
+                elif (is_top and top_wins > bot_wins) or (not is_top and bot_wins > top_wins):
+                    series_summary = f"Leading {score_str}"
+                else:
+                    series_summary = f"Trailing {score_str}"
+
+                games_data.append({
+                    "team_name": team_name,
+                    "team_abbr": team_abbr,
+                    "opponent_abbr": opponent_abbr,
+                    "is_home": False, # Doesn't matter for TBD
+                    "time_str": "Next Game TBD",
+                    "broadcasts": None,
+                    "playoff_info": f"{series_title}\n{series_summary}"
+                })
+                continue
+
             home_abbr = game["homeTeam"]["abbrev"]
             away_abbr = game["awayTeam"]["abbrev"]
             is_home = (home_abbr == team_abbr)
             opponent_abbr = away_abbr if is_home else home_abbr
             
             full_info = format_game_info(game)
-            # format_game_info returns "AWAY @ HOME Day @ Time"
+            # format_game_info returns "AWAY @ HOME Day @ Time [Playoff Info]"
             # We want just "Day @ Time"
             parts = full_info.split(" ")
             time_only = " ".join(parts[3:])
             
+            # If there's playoff info in brackets at the end, extract it
+            playoff_info = None
+            if "[" in time_only and "]" in time_only:
+                start = time_only.find("[")
+                playoff_info = time_only[start+1:-1].replace(" - ", "\n")
+                time_only = time_only[:start].strip()
+
             broadcasts = game.get("tvBroadcasts", [])
             relevant_networks = []
             for b in broadcasts:
@@ -81,7 +121,8 @@ async def next_games(ctx):
                 "opponent_abbr": opponent_abbr,
                 "is_home": is_home,
                 "time_str": time_only,
-                "broadcasts": broadcast_str
+                "broadcasts": broadcast_str,
+                "playoff_info": playoff_info
             })
         
         if not games_data:
