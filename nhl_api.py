@@ -411,3 +411,38 @@ async def get_olympic_schedule(date_obj):
                                     "round": round_desc
                                 })
     return all_events
+
+async def fetch_json(url: str):
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers) as response:
+                if response.status == 200:
+                    return await response.json()
+    except Exception:
+        pass
+    return None
+
+async def get_scores(date_str: str):
+    data = await fetch_json(f"https://api-web.nhle.com/v1/score/{date_str}")
+    return data.get("games", []) if data else []
+
+async def get_game_landing(game_id: int):
+    return await fetch_json(f"https://api-web.nhle.com/v1/gamecenter/{game_id}/landing")
+
+async def get_standings_on(date_str: str):
+    # Includes that day's games
+    return await fetch_json(f"https://api-web.nhle.com/v1/standings/{date_str}")
+
+async def get_league_schedule(date_str: str):
+    data = await fetch_json(f"https://api-web.nhle.com/v1/schedule/{date_str}")
+    return data.get("gameWeek", []) if data else []
+
+async def get_espn_news(limit: int = 50):
+    data = await fetch_json(f"https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/news?limit={limit}")
+    return data.get("articles", []) if data else []
+
+async def get_espn_injuries():
+    data = await fetch_json("https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/injuries")
+    # None on failure, so a bad fetch isn't treated as every player recovering
+    return data.get("injuries", []) if data else None

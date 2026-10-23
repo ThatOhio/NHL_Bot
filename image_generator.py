@@ -15,10 +15,18 @@ FONT_PATHS = [
     "/usr/share/fonts/Adwaita/AdwaitaSans-Bold.ttf",
 ]
 
+REGULAR_FONT_PATHS = [
+    "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/noto/NotoSans-Regular.ttf",
+    "/usr/share/fonts/Adwaita/AdwaitaSans-Regular.ttf",
+]
+
 LOGO_CACHE = {}
 
-def get_font(size):
-    for path in FONT_PATHS:
+def get_font(size, bold=True):
+    for path in (FONT_PATHS if bold else REGULAR_FONT_PATHS):
         try:
             return ImageFont.truetype(path, size)
         except:
@@ -574,3 +582,135 @@ async def draw_olympic_team(draw, img, team, x, y, anchor):
             flag_resized = flag_img.resize((flag_w, flag_h), Image.LANCZOS)
             img.paste(flag_resized, (x, y - flag_h // 2), flag_resized)
         draw.text((text_left, y), name, font=font, fill=(255, 255, 255), anchor="lm")
+
+def ordinal(n):
+    suffix = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+def wrap_words(draw, text, font, max_width):
+    lines, current = [], ""
+    for word in text.split(" "):
+        test = f"{current} {word}".strip()
+        if current and draw.textlength(test, font=font) > max_width:
+            lines.append(current)
+            current = word
+        else:
+            current = test
+    if current:
+        lines.append(current)
+    return lines
+
+async def paste_logo(img, abbr, size, x, y):
+    logo = await get_team_logo(abbr)
+    if logo:
+        logo_res = logo.resize((size, size), Image.LANCZOS)
+        img.paste(logo_res, (x, y), logo_res)
+
+async def draw_recap_card(draw, img, card, x0, y0, card_w, card_h):
+    white, grey, dim = (255, 255, 255), (200, 200, 200), (120, 120, 120)
+    gold, blue, win, loss = (255, 215, 0), (0, 180, 255), (80, 200, 120), (230, 90, 90)
+    cx = x0 + card_w // 2
+    draw.rounded_rectangle([x0, y0, x0 + card_w, y0 + card_h], radius=14, fill=(32, 32, 32))
+
+    s = card["standing"]
+    await paste_logo(img, card["abbr"], 64, x0 + 16, y0 + 14)
+    draw.text((x0 + 92, y0 + 32), card["name"], font=get_font(22), fill=white, anchor="lm")
+    if s:
+        draw.text((x0 + 92, y0 + 62), s["record"], font=get_font(18, False), fill=grey, anchor="lm")
+
+    g = card["game"]
+    if g:
+        y = y0 + 120
+        await paste_logo(img, g["away_abbr"], 56, cx - 150, y - 28)
+        await paste_logo(img, g["home_abbr"], 56, cx + 94, y - 28)
+        draw.text((cx, y - 6), f"{g['away_score']}  –  {g['home_score']}", font=get_font(34), fill=white, anchor="mm")
+        result = ("WIN" if g["won"] else "LOSS") + (f" ({g['suffix']})" if g["suffix"] else "")
+        draw.text((cx, y + 26), result, font=get_font(16), fill=win if g["won"] else loss, anchor="mm")
+
+        y += 62
+        body_font = get_font(16, False)
+        draw.text((x0 + 18, y), "GOALS", font=get_font(14), fill=dim)
+        y += 22
+        for line in wrap_words(draw, g["scorers"] or "—", body_font, card_w - 36)[:3]:
+            draw.text((x0 + 18, y), line, font=body_font, fill=grey)
+            y += 22
+        if g["stars"]:
+            y += 10
+            draw.text((x0 + 18, y), "THREE STARS", font=get_font(14), fill=dim)
+            y += 22
+            for star in g["stars"]:
+                draw.text((x0 + 18, y), ordinal(star["rank"]), font=get_font(16), fill=gold)
+                stat = f"  {star['stat']}" if star["stat"] else ""
+                draw.text((x0 + 58, y), f"{star['name']} ({star['team']}){stat}", font=body_font, fill=grey)
+                y += 22
+
+        y = y0 + card_h - 34
+        if g["playoff"]:
+            draw.text((cx, y), g["playoff"], font=get_font(16), fill=gold, anchor="mm")
+        elif s:
+            draw.text((cx, y), f"{ordinal(s['div_rank'])} {s['div_name']} · {s['points']} PTS", font=get_font(16), fill=blue, anchor="mm")
+        if s:
+            draw.text((cx, y + 20), s["form"], font=get_font(14, False), fill=dim, anchor="mm")
+    else:
+        y = y0 + 125
+        draw.text((cx, y), "NO GAME", font=get_font(16), fill=dim, anchor="mm")
+        if s:
+            draw.text((cx, y + 50), ordinal(s["div_rank"]), font=get_font(56), fill=blue, anchor="mm")
+            draw.text((cx, y + 100), f"{s['div_name']} Division", font=get_font(20), fill=white, anchor="mm")
+            draw.text((cx, y + 132), f"{s['points']} PTS · {s['gp']} GP", font=get_font(18, False), fill=grey, anchor="mm")
+            if s["wildcard"]:
+                draw.text((cx, y + 160), f"Wild card: {ordinal(s['wildcard'])} in {s['conf_name']}", font=get_font(16, False), fill=grey, anchor="mm")
+            draw.text((cx, y + 190), s["form"], font=get_font(16, False), fill=dim, anchor="mm")
+        if card["next_game"]:
+            draw.text((cx, y0 + card_h - 30), f"NEXT: {card['next_game']}", font=get_font(16), fill=gold, anchor="mm")
+
+async def generate_daily_recap_image(date_label, cards, other_games):
+    # cards: list of {abbr, name, standing, game, next_game} built by daily.py
+    # other_games: list of {away_abbr, away_score, home_abbr, home_score, suffix}
+    width, card_h = 1200, 430
+    cols, row_h = 2, 46
+    rows = (len(other_games) + cols - 1) // cols
+    height = 120 + card_h + 30 + (70 + rows * row_h if other_games else 0) + 30
+    img = Image.new('RGB', (width, height), color=(20, 20, 20))
+    draw = ImageDraw.Draw(img)
+
+    draw.rectangle([10, 10, width - 10, height - 10], outline=(50, 50, 50), width=5)
+    draw.text((width // 2, 50), "NHL DAILY RECAP", font=get_font(40), fill=(255, 255, 255), anchor="mm")
+    draw.text((width // 2, 90), date_label, font=get_font(20, False), fill=(120, 120, 120), anchor="mm")
+
+    gap = 20
+    card_w = (width - 40 - gap * (len(cards) - 1)) // max(len(cards), 1)
+    for i, card in enumerate(cards):
+        await draw_recap_card(draw, img, card, 20 + i * (card_w + gap), 120, card_w, card_h)
+
+    if other_games:
+        y = 120 + card_h + 40
+        draw.text((30, y), "AROUND THE LEAGUE", font=get_font(20), fill=(120, 120, 120))
+        y += 40
+        score_font, suffix_font = get_font(20), get_font(16)
+        col_w = (width - 60) // cols
+        # Fixed block width so rows line up when centered
+        block_w = 350
+        for idx, g in enumerate(other_games):
+            bx = 30 + (idx % cols) * col_w + (col_w - block_w) // 2
+            ry = y + (idx // cols) * row_h
+            if g["suffix"] == "PPD":
+                away_color = home_color = (120, 120, 120)
+                away_score = home_score = "-"
+            else:
+                away_won = (g["away_score"] or 0) > (g["home_score"] or 0)
+                away_color = (255, 255, 255) if away_won else (120, 120, 120)
+                home_color = (255, 255, 255) if not away_won else (120, 120, 120)
+                away_score, home_score = g["away_score"], g["home_score"]
+            await paste_logo(img, g["away_abbr"], 32, bx, ry)
+            draw.text((bx + 42, ry + 16), f"{g['away_abbr']}  {away_score}", font=score_font, fill=away_color, anchor="lm")
+            draw.text((bx + 150, ry + 16), "–", font=score_font, fill=(120, 120, 120), anchor="mm")
+            draw.text((bx + 175, ry + 16), f"{home_score}  {g['home_abbr']}", font=score_font, fill=home_color, anchor="lm")
+            await paste_logo(img, g["home_abbr"], 32, bx + 270, ry)
+            if g["suffix"]:
+                draw.text((bx + 315, ry + 16), g["suffix"], font=suffix_font, fill=(255, 215, 0), anchor="lm")
+
+    buffer = io.BytesIO()
+    img.save(buffer, format='PNG')
+    buffer.seek(0)
+    return buffer

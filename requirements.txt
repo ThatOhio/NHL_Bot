@@ -2,5 +2,6 @@ discord.py
 python-dotenv
 aiohttp
 Pillow
+anthropic
 
 pycountry
